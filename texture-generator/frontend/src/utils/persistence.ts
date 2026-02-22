@@ -48,7 +48,7 @@ function idbDelete(db: IDBDatabase, key: string): Promise<void> {
   });
 }
 
-const IMAGE_FIELDS = ['textureUrl', 'displacementUrl', 'normalUrl'] as const;
+const IMAGE_FIELDS = ['textureUrl', 'displacementUrl', 'normalUrl', 'referenceImageUrl'] as const;
 
 /** Save all image data URLs from tags into IndexedDB. */
 async function saveImages(tags: Tag[]): Promise<void> {
@@ -93,6 +93,7 @@ function stripImages(tags: Tag[]): Tag[] {
     textureUrl: t.textureUrl ? '__idb__' : null,
     displacementUrl: t.displacementUrl ? '__idb__' : null,
     normalUrl: t.normalUrl ? '__idb__' : null,
+    referenceImageUrl: t.referenceImageUrl ? '__idb__' : null,
   }));
 }
 

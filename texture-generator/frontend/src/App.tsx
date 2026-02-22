@@ -5,6 +5,7 @@ import Timeline from './components/Timeline';
 import PlaybackControls from './components/PlaybackControls';
 import VideoPanel from './components/VideoPanel';
 import TagPanel from './components/TagPanel';
+import MenuBar from './components/MenuBar';
 import {
   mockPaths,
   mockSegments,
@@ -51,6 +52,8 @@ function syncTags(tags: Tag[], segments: Segment[]): Tag[] {
         textureUrl: null,
         displacementUrl: null,
         normalUrl: null,
+        referenceImageUrl: null,
+        ipAdapterScale: 0.5,
       });
     }
   }
@@ -132,6 +135,9 @@ export default function App() {
   const rafRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
   const pathViewRef = useRef<PathViewHandle>(null);
+  const [maxDisplacement, setMaxDisplacement] = useState(1.0);
+  const [showTextures, setShowTextures] = useState(true);
+  const [textureDensity, setTextureDensity] = useState(1.0);
 
   // Hydrate image data from IndexedDB after mount
   useEffect(() => {
@@ -141,7 +147,7 @@ export default function App() {
           prev.map((t) => {
             const restored = saved.tags.find((s) => s.id === t.id);
             return restored
-              ? { ...t, textureUrl: restored.textureUrl, displacementUrl: restored.displacementUrl, normalUrl: restored.normalUrl }
+              ? { ...t, textureUrl: restored.textureUrl, displacementUrl: restored.displacementUrl, normalUrl: restored.normalUrl, referenceImageUrl: restored.referenceImageUrl }
               : t;
           })
         );
@@ -258,6 +264,15 @@ export default function App() {
 
   return (
     <div className="app">
+      {/* ── Menu bar ── */}
+      <MenuBar
+        onExportProject={handleExport}
+        onImportProject={handleImport}
+        onExportMesh={() => pathViewRef.current?.exportMesh()}
+        onExportUSDZ={() => pathViewRef.current?.exportUSDZ()}
+        onExportOBJ={() => pathViewRef.current?.exportOBJ()}
+      />
+
       {/* ── Top region: Video + 3D ── */}
       <div className="top-region" style={{ height: topResize.size }}>
         <div className="video-wrapper" style={{ width: videoResize.size }}>
@@ -273,6 +288,9 @@ export default function App() {
             tags={syncedTags}
             currentTime={currentTime}
             duration={DURATION}
+            maxDisplacement={maxDisplacement}
+            showTextures={showTextures}
+            textureDensity={textureDensity}
           />
         </div>
       </div>
@@ -298,9 +316,35 @@ export default function App() {
         <div className="tag-wrapper" style={{ width: tagResize.size }}>
           <TagPanel tags={syncedTags} onTagsChange={setTags} />
           <div className="sidebar-actions">
-            <button className="action-btn" onClick={handleExport}>Export Project</button>
-            <button className="action-btn" onClick={handleImport}>Import Project</button>
-            <button className="action-btn action-btn-mesh" onClick={() => pathViewRef.current?.exportMesh()}>Export Mesh (.glb)</button>
+            <button
+              className={`action-btn texture-toggle-btn${showTextures ? ' active' : ''}`}
+              onClick={() => setShowTextures((v) => !v)}
+              title={showTextures ? 'Hide displacement textures' : 'Show displacement textures'}
+            >
+              {showTextures ? 'Tex ON' : 'Tex OFF'}
+            </button>
+            <label className="displacement-slider-label">Disp</label>
+            <input
+              type="range"
+              className="displacement-slider"
+              min={0}
+              max={2}
+              step={0.01}
+              value={maxDisplacement}
+              onChange={(e) => setMaxDisplacement(parseFloat(e.target.value))}
+            />
+            <span className="displacement-slider-value">{maxDisplacement.toFixed(2)}</span>
+            <label className="displacement-slider-label">Density</label>
+            <input
+              type="range"
+              className="displacement-slider"
+              min={0.1}
+              max={3}
+              step={0.05}
+              value={textureDensity}
+              onChange={(e) => setTextureDensity(parseFloat(e.target.value))}
+            />
+            <span className="displacement-slider-value">{textureDensity.toFixed(2)}</span>
           </div>
         </div>
         <div className="resize-handle-v" onMouseDown={tagResize.onMouseDown} />

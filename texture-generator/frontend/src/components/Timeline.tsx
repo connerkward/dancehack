@@ -3,7 +3,7 @@ import type { Path, Segment, Tag, Keyframe } from '../types';
 
 const PIXELS_PER_SECOND = 80;
 const LABEL_WIDTH = 120;
-const SEGMENT_HEIGHT = 22;
+const SEGMENT_HEIGHT = 48;
 const FADE_LANE_HEIGHT = 40;
 const TRACK_HEIGHT = SEGMENT_HEIGHT + FADE_LANE_HEIGHT + 8;
 const MIN_SEGMENT_DURATION = 0.2;
@@ -57,6 +57,46 @@ function buildFadeMaskGradient(keyframes: Keyframe[], duration: number): string 
   return `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
+/** Compute normalized tube width (0.3–1.0) at any time for a given path. */
+function buildWidthProfile(path: Path): (timeSec: number, duration: number) => number {
+  const velocities = path.points.map((p) => p.velocity ?? 0.5);
+  const maxV = Math.max(...velocities);
+  const minV = Math.min(...velocities);
+  return (timeSec: number, duration: number) => {
+    if (maxV === minV) return 1.0;
+    const t = Math.max(0, Math.min(1, timeSec / duration));
+    const idx = t * (path.points.length - 1);
+    const i0 = Math.min(Math.floor(idx), path.points.length - 1);
+    const i1 = Math.min(i0 + 1, path.points.length - 1);
+    const frac = idx - Math.floor(idx);
+    const v = velocities[i0] + frac * (velocities[i1] - velocities[i0]);
+    const normalized = (v - minV) / (maxV - minV);
+    return 0.3 + 0.7 * normalized;
+  };
+}
+
+/** Build CSS clip-path polygon tracing the tube cross-section silhouette. */
+function buildSegmentClipPath(
+  widthFn: (t: number, dur: number) => number,
+  segStart: number,
+  segEnd: number,
+  duration: number,
+): string {
+  const numSamples = 32;
+  const topPoints: string[] = [];
+  const bottomPoints: string[] = [];
+  for (let i = 0; i <= numSamples; i++) {
+    const frac = i / numSamples;
+    const timeSec = segStart + frac * (segEnd - segStart);
+    const w = widthFn(timeSec, duration);
+    const xPct = (frac * 100).toFixed(2);
+    const halfW = w * 50;
+    topPoints.push(`${xPct}% ${(50 - halfW).toFixed(2)}%`);
+    bottomPoints.unshift(`${xPct}% ${(50 + halfW).toFixed(2)}%`);
+  }
+  return `polygon(${topPoints.join(', ')}, ${bottomPoints.join(', ')})`;
+}
+
 /* ─── Main Timeline ─────────────────────────────────────────────────── */
 
 type Selection = {
@@ -90,7 +130,9 @@ export default function Timeline({
   const [draggingKf, setDraggingKf] = useState<string | null>(null);
   const [resizing, setResizing] = useState<{ segId: string; edge: 'start' | 'end'; originX: number; originTime: number } | null>(null);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
+  const [retagging, setRetagging] = useState<{ segId: string; x: number; y: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const retagRef = useRef<HTMLDivElement>(null);
 
   const tagById = useMemo(() => {
     const m = new Map<string, Tag>();
@@ -119,6 +161,12 @@ export default function Timeline({
     m.forEach((list) => list.sort((a, b) => a.time - b.time));
     return m;
   }, [keyframes]);
+
+  const widthProfiles = useMemo(() => {
+    const m = new Map<string, (t: number, dur: number) => number>();
+    paths.forEach((p) => m.set(p.id, buildWidthProfile(p)));
+    return m;
+  }, [paths]);
 
   const rulerTicks = useMemo(() => {
     const ticks: { t: number; major: boolean }[] = [];
@@ -180,6 +228,46 @@ export default function Timeline({
     window.addEventListener('keydown', handle);
     return () => window.removeEventListener('keydown', handle);
   }, [hasSelection, deleteSelection]);
+
+  /* ── Close retag popup on outside click ─────────── */
+  useEffect(() => {
+    if (!retagging) return;
+    const handle = (e: MouseEvent) => {
+      if (retagRef.current && !retagRef.current.contains(e.target as Node)) {
+        setRetagging(null);
+      }
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [retagging]);
+
+  /* ── Segment double-click → retag ────────────────── */
+  const handleSegmentDoubleClick = useCallback(
+    (segId: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      const rect = panelRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setRetagging({
+        segId,
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+    },
+    [],
+  );
+
+  const handleRetag = useCallback(
+    (tagId: string) => {
+      if (!retagging || !onSegmentsChange) return;
+      onSegmentsChange(
+        segments.map((s) =>
+          s.id === retagging.segId ? { ...s, tagId } : s
+        ),
+      );
+      setRetagging(null);
+    },
+    [retagging, segments, onSegmentsChange],
+  );
 
   /* ── Ruler click → seek ─────────────────────────── */
   const handleRulerClick = useCallback(
@@ -399,7 +487,7 @@ export default function Timeline({
           </span>
         )}
         <span className="timeline-hint">
-          Click = select | Shift+click = multi | Delete = remove | Dbl-click lane = add
+          Click = select | Dbl-click block = retag | Dbl-click lane = add
         </span>
       </div>
 
@@ -497,6 +585,10 @@ export default function Timeline({
                     const width = (seg.end - seg.start) * PIXELS_PER_SECOND;
                     const displayName = tag?.label || seg.tagId;
                     const isSelected = selection.segments.has(seg.id);
+                    const widthFn = widthProfiles.get(path.id);
+                    const clipPath = widthFn
+                      ? buildSegmentClipPath(widthFn, seg.start, seg.end, duration)
+                      : undefined;
                     return (
                       <div
                         key={seg.id}
@@ -504,6 +596,7 @@ export default function Timeline({
                         style={{
                           left,
                           width: Math.max(width, 24),
+                          clipPath,
                           backgroundImage: textureUrl ? `url(${textureUrl})` : undefined,
                           backgroundSize: textureUrl ? `${SEGMENT_HEIGHT}px ${SEGMENT_HEIGHT}px` : undefined,
                           backgroundRepeat: textureUrl ? 'repeat' : undefined,
@@ -512,6 +605,7 @@ export default function Timeline({
                         }}
                         title={`${displayName} (${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s)`}
                         onClick={(e) => handleSegmentClick(seg.id, e)}
+                        onDoubleClick={(e) => handleSegmentDoubleClick(seg.id, e)}
                         onContextMenu={(e) => handleSegmentDelete(seg.id, e)}
                       >
                         <div
@@ -581,6 +675,32 @@ export default function Timeline({
           );
         })}
       </div>
+
+      {/* ── Retag popup ── */}
+      {retagging && (
+        <div
+          ref={retagRef}
+          className="retag-popup"
+          style={{ left: retagging.x, top: retagging.y }}
+        >
+          {tags.map((tag) => (
+            <button
+              key={tag.id}
+              className="retag-option"
+              onClick={() => handleRetag(tag.id)}
+            >
+              <span
+                className="retag-swatch"
+                style={{
+                  backgroundImage: tag.textureUrl ? `url(${tag.textureUrl})` : undefined,
+                  backgroundColor: tag.textureUrl ? undefined : tag.color,
+                }}
+              />
+              <span className="retag-label">{tag.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

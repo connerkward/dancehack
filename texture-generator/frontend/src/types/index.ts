@@ -36,6 +36,8 @@ export interface Tag {
   displacementUrl?: string | null;
   normalUrl?: string | null;
   displacementScale?: number;
+  referenceImageUrl?: string | null;
+  ipAdapterScale?: number;
 }
 
 /** Keyframe for fade (opacity or displacement) along the track. */

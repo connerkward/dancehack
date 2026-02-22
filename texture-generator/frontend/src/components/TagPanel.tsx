@@ -14,6 +14,30 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+/** Resize an image (from data URL) to max dimension, returns data URL. */
+function resizeImage(dataUrl: string, maxDim: number): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width <= maxDim && height <= maxDim) {
+        resolve(dataUrl);
+        return;
+      }
+      const scale = maxDim / Math.max(width, height);
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.src = dataUrl;
+  });
+}
+
 const TAG_PALETTE = [
   '#ef4444', '#3b82f6', '#22c55e', '#a1a1aa',
   '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6',
@@ -40,8 +64,14 @@ export default function TagPanel({
   const [addingNew, setAddingNew] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newPrompt, setNewPrompt] = useState('');
+  const [editRefImage, setEditRefImage] = useState<string | null>(null);
+  const [editIpScale, setEditIpScale] = useState(0.5);
+  const [newRefImage, setNewRefImage] = useState<string | null>(null);
+  const [newIpScale, setNewIpScale] = useState(0.5);
   const editRef = useRef<HTMLDivElement>(null);
   const newRef = useRef<HTMLDivElement>(null);
+  const editFileRef = useRef<HTMLInputElement>(null);
+  const newFileRef = useRef<HTMLInputElement>(null);
 
   // Close preview on Escape
   useEffect(() => {
@@ -64,6 +94,8 @@ export default function TagPanel({
         setAddingNew(false);
         setNewLabel('');
         setNewPrompt('');
+        setNewRefImage(null);
+        setNewIpScale(0.5);
       }
     };
     document.addEventListener('mousedown', handle);
@@ -93,15 +125,22 @@ export default function TagPanel({
     setEditingId(tag.id);
     setEditLabel(tag.label);
     setEditPrompt(tag.prompt ?? '');
+    setEditRefImage(tag.referenceImageUrl ?? null);
+    setEditIpScale(tag.ipAdapterScale ?? 0.5);
   }, []);
 
   const saveEdit = useCallback(() => {
     if (!editingId) return;
     const label = editLabel.trim();
     if (!label) return;
-    updateTag(editingId, { label, prompt: editPrompt.trim() });
+    updateTag(editingId, {
+      label,
+      prompt: editPrompt.trim(),
+      referenceImageUrl: editRefImage,
+      ipAdapterScale: editIpScale,
+    });
     setEditingId(null);
-  }, [editingId, editLabel, editPrompt, updateTag]);
+  }, [editingId, editLabel, editPrompt, editRefImage, editIpScale, updateTag]);
 
   const addNewTag = useCallback(() => {
     const label = newLabel.trim();
@@ -117,12 +156,29 @@ export default function TagPanel({
       textureUrl: null,
       displacementUrl: null,
       normalUrl: null,
+      referenceImageUrl: newRefImage,
+      ipAdapterScale: newIpScale,
     };
     onTagsChange((prev) => [...prev, newTag]);
     setAddingNew(false);
     setNewLabel('');
     setNewPrompt('');
-  }, [newLabel, newPrompt, tags, onTagsChange]);
+    setNewRefImage(null);
+    setNewIpScale(0.5);
+  }, [newLabel, newPrompt, newRefImage, newIpScale, tags, onTagsChange]);
+
+  const handleRefUpload = useCallback(
+    (file: File, target: 'edit' | 'new') => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const resized = await resizeImage(reader.result as string, 512);
+        if (target === 'edit') setEditRefImage(resized);
+        else setNewRefImage(resized);
+      };
+      reader.readAsDataURL(file);
+    },
+    []
+  );
 
   const generateTexture = useCallback(
     async (tag: Tag) => {
@@ -137,6 +193,14 @@ export default function TagPanel({
         form.append('height', '1024');
         form.append('steps', '30');
         form.append('guidance', '7');
+
+        // Attach reference image if present
+        if (tag.referenceImageUrl) {
+          const scale = tag.ipAdapterScale ?? 0.5;
+          form.append('ip_adapter_scale', String(scale));
+          const refBlob = await fetch(tag.referenceImageUrl).then((r) => r.blob());
+          form.append('reference_image', refBlob, 'reference.png');
+        }
 
         // Stream progress via SSE
         const res = await fetch(`${GENERATOR_URL}/generate-stream`, {
@@ -281,9 +345,40 @@ export default function TagPanel({
             value={newPrompt}
             onChange={(e) => setNewPrompt(e.target.value)}
           />
+          <div className="tag-ref-row">
+            <input
+              ref={newFileRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleRefUpload(f, 'new'); e.target.value = ''; }}
+            />
+            <button className="tag-ref-upload-btn" type="button" onClick={() => newFileRef.current?.click()}>Ref</button>
+            {newRefImage && (
+              <div className="tag-ref-preview">
+                <img src={newRefImage} alt="ref" />
+                <button className="tag-ref-clear" onClick={() => setNewRefImage(null)}>&times;</button>
+              </div>
+            )}
+          </div>
+          {newRefImage && (
+            <div className="tag-ref-scale-row">
+              <label className="tag-ref-scale-label">Strength</label>
+              <input
+                type="range"
+                className="tag-ref-scale-slider"
+                min={0}
+                max={1}
+                step={0.05}
+                value={newIpScale}
+                onChange={(e) => setNewIpScale(parseFloat(e.target.value))}
+              />
+              <span className="tag-ref-scale-value">{newIpScale.toFixed(2)}</span>
+            </div>
+          )}
           <div className="tag-edit-actions">
             <button className="tag-edit-save" onClick={addNewTag}>Add</button>
-            <button className="tag-edit-cancel" onClick={() => { setAddingNew(false); setNewLabel(''); setNewPrompt(''); }}>Cancel</button>
+            <button className="tag-edit-cancel" onClick={() => { setAddingNew(false); setNewLabel(''); setNewPrompt(''); setNewRefImage(null); setNewIpScale(0.5); }}>Cancel</button>
           </div>
         </div>
       )}
@@ -311,6 +406,13 @@ export default function TagPanel({
                 title="Displacement map"
               />
             )}
+            {tag.referenceImageUrl && !isEditing && (
+              <div
+                className="tag-ref-swatch"
+                style={{ backgroundImage: `url(${tag.referenceImageUrl})` }}
+                title={`Reference image (strength ${(tag.ipAdapterScale ?? 0.5).toFixed(2)})`}
+              />
+            )}
 
             {isEditing ? (
               <div className="tag-edit-form tag-edit-inline" ref={editRef}>
@@ -329,6 +431,37 @@ export default function TagPanel({
                   value={editPrompt}
                   onChange={(e) => setEditPrompt(e.target.value)}
                 />
+                <div className="tag-ref-row">
+                  <input
+                    ref={editFileRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleRefUpload(f, 'edit'); e.target.value = ''; }}
+                  />
+                  <button className="tag-ref-upload-btn" type="button" onClick={() => editFileRef.current?.click()}>Ref</button>
+                  {editRefImage && (
+                    <div className="tag-ref-preview">
+                      <img src={editRefImage} alt="ref" />
+                      <button className="tag-ref-clear" onClick={() => setEditRefImage(null)}>&times;</button>
+                    </div>
+                  )}
+                </div>
+                {editRefImage && (
+                  <div className="tag-ref-scale-row">
+                    <label className="tag-ref-scale-label">Strength</label>
+                    <input
+                      type="range"
+                      className="tag-ref-scale-slider"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={editIpScale}
+                      onChange={(e) => setEditIpScale(parseFloat(e.target.value))}
+                    />
+                    <span className="tag-ref-scale-value">{editIpScale.toFixed(2)}</span>
+                  </div>
+                )}
                 <div className="tag-edit-actions">
                   <button className="tag-edit-save" onClick={saveEdit}>Save</button>
                   <button className="tag-edit-cancel" onClick={() => setEditingId(null)}>Cancel</button>

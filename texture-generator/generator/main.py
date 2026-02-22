@@ -1,16 +1,16 @@
 """
-Texture Generator Service v3.0
+Texture Generator Service v3.1
 
 High-quality tileable texture generation using SDXL Base 1.0 (~7GB).
 Seamless tiling via circular padding on all Conv2d layers (torus topology).
+MiDaS DPT_Large for high-quality displacement/depth maps.
 
-Upgrade from v2.0 (SDXL + SDXL-Lightning):
-- Removed Lightning LoRA (was crippling prompt following at 1.5 guidance)
-- Proper inference: 30 steps, guidance 7.0 for faithful prompt adherence
+Features:
 - Circular padding on both UNet + VAE for guaranteed seamless tiling
 - Material-aware prompt engineering
-- Sobel-based displacement with circular boundary conditions
+- MiDaS DPT_Large neural depth estimation for displacement maps
 - Normal map generation endpoint
+- IP-Adapter for reference image support
 """
 
 import asyncio
@@ -32,7 +32,7 @@ from PIL import Image, ImageFilter
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Texture Generator", version="3.0.0")
+app = FastAPI(title="Texture Generator", version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +43,9 @@ app.add_middleware(
 
 pipe = None
 device = None
+gen_lock = threading.Lock()
+midas_model = None
+midas_transform = None
 
 # ── Material-aware prompt enhancement ──────────────────────────────────────
 
@@ -176,21 +179,46 @@ def load_pipeline():
     vae_count = patch_conv2d_circular(pipe.vae)
     logger.info(f"Patched {unet_count} UNet + {vae_count} VAE Conv2d layers")
 
+    # Load IP-Adapter for reference image support
+    logger.info("Loading IP-Adapter for SDXL...")
+    pipe.load_ip_adapter(
+        "h94/IP-Adapter",
+        subfolder="sdxl_models",
+        weight_name="ip-adapter_sdxl.bin",
+    )
+    pipe.set_ip_adapter_scale(0.0)
+    logger.info("IP-Adapter loaded (default scale 0.0)")
+
     pipe.enable_attention_slicing()
     pipe.to(device)
-    logger.info("Pipeline ready (SDXL Base + circular padding)")
+    logger.info("Pipeline ready (SDXL Base + circular padding + IP-Adapter)")
+
+
+def load_midas():
+    """Load MiDaS DPT_Large for high-quality depth/displacement estimation (~1.2GB)."""
+    global midas_model, midas_transform
+
+    logger.info("Loading MiDaS DPT_Large (~1.2GB)...")
+    midas_model = torch.hub.load("intel-isl/MiDaS", "DPT_Large")
+    midas_model.eval()
+    midas_model.to(device)
+
+    midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
+    midas_transform = midas_transforms.dpt_transform
+    logger.info("MiDaS DPT_Large ready")
 
 
 @app.on_event("startup")
 async def startup():
     load_pipeline()
+    load_midas()
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "backend": "sdxl-base-1.0",
         "device": str(device) if device else "not loaded",
     }
@@ -253,6 +281,8 @@ async def generate_stream(
     height: int = Form(1024),
     steps: int = Form(30),
     guidance: float = Form(7.0),
+    ip_adapter_scale: float = Form(0.0),
+    reference_image: UploadFile | None = File(None),
 ):
     """Generate a tileable texture with SSE progress updates.
 
@@ -260,11 +290,30 @@ async def generate_stream(
       event: progress  data: {"step": N, "total": M}
       event: complete  data: {"image": "<base64 png>"}
       event: error     data: {"message": "..."}
+
+    Optional IP-Adapter reference image:
+      - reference_image: uploaded image file
+      - ip_adapter_scale: strength 0-1 (0 = text only, 1 = image only)
     """
     width = max(512, min(2048, (width // 8) * 8))
     height = max(512, min(2048, (height // 8) * 8))
     steps = max(10, min(50, steps))
     guidance = max(1.0, min(15.0, guidance))
+    ip_adapter_scale = max(0.0, min(1.0, ip_adapter_scale))
+
+    # Read reference image before thread (UploadFile is async)
+    ref_pil = None
+    if reference_image is not None:
+        try:
+            ref_bytes = await reference_image.read()
+            if ref_bytes:
+                ref_pil = Image.open(io.BytesIO(ref_bytes)).convert("RGB")
+                logger.info(
+                    f"Reference image loaded: {ref_pil.size}, "
+                    f"ip_adapter_scale={ip_adapter_scale}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to read reference image: {e}")
 
     progress = {"step": 0, "total": steps}
     image_holder: list = [None]
@@ -285,19 +334,34 @@ async def generate_stream(
                 f"steps={steps}, cfg={guidance}"
             )
 
-            result = pipe(
-                prompt=enhanced_prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                num_inference_steps=steps,
-                guidance_scale=guidance,
-                generator=generator,
-                callback_on_step_end=on_step,
-            )
+            with gen_lock:
+                # Set IP-Adapter scale (0.0 if no reference image)
+                scale = ip_adapter_scale if ref_pil is not None else 0.0
+                pipe.set_ip_adapter_scale(scale)
+
+                kwargs = dict(
+                    prompt=enhanced_prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance,
+                    generator=generator,
+                    callback_on_step_end=on_step,
+                )
+
+                if ref_pil is not None and scale > 0:
+                    kwargs["ip_adapter_image"] = ref_pil
+
+                result = pipe(**kwargs)
+
+                # Reset scale to 0 after generation
+                pipe.set_ip_adapter_scale(0.0)
+
             image_holder[0] = result.images[0]
         except Exception as e:
-            logger.error(f"Generation failed: {e}")
+            import traceback
+            logger.error(f"Generation failed: {e}\n{traceback.format_exc()}")
             error_holder[0] = str(e)
         finally:
             done.set()
@@ -371,37 +435,69 @@ def _luminance(rgb: np.ndarray) -> np.ndarray:
 @app.post("/displacement")
 async def displacement(image: UploadFile = File(...)):
     """
-    Generate a height/displacement map from a color texture.
+    Generate a height/displacement map from a color texture using MiDaS DPT_Large.
 
-    Uses multi-scale luminance analysis with Sobel edge structure
-    and circular boundary conditions for seamless results.
+    Uses neural monocular depth estimation for realistic surface height inference,
+    with seamless tiling post-processing via circular boundary blending.
     """
     img = Image.open(io.BytesIO(await image.read())).convert("RGB")
-    arr = np.array(img, dtype=np.float64)
+    orig_w, orig_h = img.size
 
-    gray = _luminance(arr)
-    gray_img = Image.fromarray(gray.astype(np.uint8), mode="L")
+    # MiDaS transform expects numpy HWC uint8
+    img_np = np.array(img)
 
-    # Multi-scale decomposition
-    base = np.array(
-        gray_img.filter(ImageFilter.GaussianBlur(radius=3)), dtype=np.float64
-    )
-    fine = gray - np.array(
-        gray_img.filter(ImageFilter.GaussianBlur(radius=1)), dtype=np.float64
-    )
+    # Apply MiDaS transform and run inference
+    input_batch = midas_transform(img_np).to(device)
 
-    # Edge structure via circular Sobel
-    dx, dy = _sobel_circular(gray / 255.0)
-    edge_mag = np.sqrt(dx**2 + dy**2)
-    edge_mag = (edge_mag / (edge_mag.max() + 1e-9)) * 255
+    with torch.no_grad():
+        prediction = midas_model(input_batch)
 
-    # Blend: 60% smooth base + 25% fine detail + 15% edge structure
-    combined = base * 0.60 + fine * 0.25 + edge_mag * 0.15
-    combined = (combined - combined.min()) / (combined.max() - combined.min() + 1e-9)
-    combined = (combined * 255).clip(0, 255)
+        # Resize to original image dimensions
+        prediction = torch.nn.functional.interpolate(
+            prediction.unsqueeze(1),
+            size=(orig_h, orig_w),
+            mode="bicubic",
+            align_corners=False,
+        ).squeeze()
 
-    result = Image.fromarray(combined.astype(np.uint8), mode="L")
-    result = result.filter(ImageFilter.GaussianBlur(radius=0.5))
+    depth = prediction.cpu().numpy()
+
+    # Normalize to 0-255 range
+    depth_min = depth.min()
+    depth_max = depth.max()
+    depth = (depth - depth_min) / (depth_max - depth_min + 1e-9)
+
+    # Invert: MiDaS outputs inverse depth (closer = higher values),
+    # but for displacement we want raised surfaces = higher values
+    depth = 1.0 - depth
+
+    # Seamless tiling fix: blend edges with circular wrap
+    # Use a feathered border to smooth any seam discontinuities
+    border = max(8, min(orig_w, orig_h) // 32)
+    depth_tiled = depth.copy()
+
+    # Horizontal seam blending
+    for i in range(border):
+        alpha = i / border
+        left_col = depth[:, i]
+        right_col = depth[:, -(i + 1)]
+        blended = left_col * (1 - alpha) + right_col * alpha
+        depth_tiled[:, i] = depth[:, i] * alpha + blended * (1 - alpha)
+        depth_tiled[:, -(i + 1)] = depth[:, -(i + 1)] * alpha + blended * (1 - alpha)
+
+    # Vertical seam blending
+    for i in range(border):
+        alpha = i / border
+        top_row = depth_tiled[i, :]
+        bot_row = depth_tiled[-(i + 1), :]
+        blended = top_row * (1 - alpha) + bot_row * alpha
+        depth_tiled[i, :] = depth_tiled[i, :] * alpha + blended * (1 - alpha)
+        depth_tiled[-(i + 1), :] = depth_tiled[-(i + 1), :] * alpha + blended * (1 - alpha)
+
+    # Light Gaussian smooth to reduce any remaining micro-artifacts
+    depth_uint8 = (depth_tiled * 255).clip(0, 255).astype(np.uint8)
+    result = Image.fromarray(depth_uint8, mode="L")
+    result = result.filter(ImageFilter.GaussianBlur(radius=0.8))
 
     buf = io.BytesIO()
     result.save(buf, format="PNG")
