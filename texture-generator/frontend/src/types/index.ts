@@ -29,10 +29,13 @@ export interface Segment {
 export interface Tag {
   id: string;
   label: string;
+  prompt?: string;            // texture generation prompt
   color: string;              // display color (hex)
   textureId?: string | null;  // assigned after generation
   textureUrl?: string | null;
   displacementUrl?: string | null;
+  normalUrl?: string | null;
+  displacementScale?: number;
 }
 
 /** Keyframe for fade (opacity or displacement) along the track. */

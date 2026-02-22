@@ -13,8 +13,12 @@ Upgrade from v2.0 (SDXL + SDXL-Lightning):
 - Normal map generation endpoint
 """
 
+import asyncio
+import base64
 import io
+import json
 import logging
+import threading
 
 import numpy as np
 import torch
@@ -95,20 +99,22 @@ def enhance_prompt(prompt: str) -> tuple[str, str]:
     hint_str = f", {', '.join(hints)}" if hints else ""
 
     enhanced = (
-        f"seamless tileable texture pattern of {prompt}{hint_str}, "
-        "top-down orthographic view, even flat lighting, no directional shadows, "
-        "highly detailed, sharp focus, 8k resolution, PBR material texture, "
-        "uniform density across entire image, perfectly repeating seamless pattern, "
-        "professional game texture asset, substance designer quality"
+        f"close-up overhead photograph of {prompt} surface{hint_str}, "
+        "top-down orthographic view, even flat lighting, "
+        "highly detailed, sharp focus, 8k, "
+        "no focal point, no center composition, "
+        "random natural variation, irregular distribution, "
+        "fills entire frame edge to edge uniformly"
     )
 
     negative = (
         "blurry, soft focus, low quality, low resolution, watermark, text, logo, "
         "border, frame, vignette, perspective distortion, vanishing point, "
-        "3d render, photograph, depth of field, bokeh, "
+        "3d render, depth of field, bokeh, "
         "human, person, face, fingers, animal, "
         "noisy, jpeg artifacts, compression artifacts, color banding, "
-        "visible seam, edge discontinuity, uneven lighting, spotlight, gradient"
+        "visible seam, uneven lighting, spotlight, gradient, "
+        "obvious pattern, grid, symmetrical, repeating motif, centered object"
     )
 
     return enhanced, negative
@@ -238,6 +244,92 @@ async def generate(
     image.save(buf, format="PNG")
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
+
+
+@app.post("/generate-stream")
+async def generate_stream(
+    prompt: str = Form(...),
+    width: int = Form(1024),
+    height: int = Form(1024),
+    steps: int = Form(30),
+    guidance: float = Form(7.0),
+):
+    """Generate a tileable texture with SSE progress updates.
+
+    Streams events:
+      event: progress  data: {"step": N, "total": M}
+      event: complete  data: {"image": "<base64 png>"}
+      event: error     data: {"message": "..."}
+    """
+    width = max(512, min(2048, (width // 8) * 8))
+    height = max(512, min(2048, (height // 8) * 8))
+    steps = max(10, min(50, steps))
+    guidance = max(1.0, min(15.0, guidance))
+
+    progress = {"step": 0, "total": steps}
+    image_holder: list = [None]
+    error_holder: list = [None]
+    done = threading.Event()
+
+    def run():
+        try:
+            def on_step(p, step_index, timestep, cb_kwargs):
+                progress["step"] = step_index + 1
+                return cb_kwargs
+
+            enhanced_prompt, negative_prompt = enhance_prompt(prompt)
+            generator = torch.Generator(device="cpu")
+
+            logger.info(
+                f"Generating (stream): '{prompt}' at {width}x{height}, "
+                f"steps={steps}, cfg={guidance}"
+            )
+
+            result = pipe(
+                prompt=enhanced_prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                num_inference_steps=steps,
+                guidance_scale=guidance,
+                generator=generator,
+                callback_on_step_end=on_step,
+            )
+            image_holder[0] = result.images[0]
+        except Exception as e:
+            logger.error(f"Generation failed: {e}")
+            error_holder[0] = str(e)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=run)
+    thread.start()
+
+    async def events():
+        last_step = -1
+        while not done.is_set():
+            if progress["step"] != last_step:
+                last_step = progress["step"]
+                yield f"event: progress\ndata: {json.dumps(progress)}\n\n"
+            await asyncio.sleep(0.2)
+
+        # Emit final progress
+        if progress["step"] != last_step:
+            yield f"event: progress\ndata: {json.dumps(progress)}\n\n"
+
+        if error_holder[0]:
+            yield f"event: error\ndata: {json.dumps({'message': error_holder[0]})}\n\n"
+        else:
+            buf = io.BytesIO()
+            image_holder[0].save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            yield f"event: complete\ndata: {json.dumps({'image': b64})}\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── PBR map generation ─────────────────────────────────────────────────────

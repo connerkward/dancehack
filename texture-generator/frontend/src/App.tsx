@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import PathView from './components/PathView';
+import type { PathViewHandle } from './components/PathView';
 import Timeline from './components/Timeline';
 import PlaybackControls from './components/PlaybackControls';
 import VideoPanel from './components/VideoPanel';
@@ -24,12 +25,10 @@ const TAG_PALETTE = [
 
 /** Ensure all tags referenced by segments exist in the tags array, and all tags have a color. */
 function syncTags(tags: Tag[], segments: Segment[]): Tag[] {
-  // Migrate: ensure every tag has a color
   let result = tags.map((t, i) =>
     t.color ? t : { ...t, color: TAG_PALETTE[i % TAG_PALETTE.length] }
   );
 
-  // Find tags referenced by segments but missing from the list
   const existingIds = new Set(result.map((t) => t.id));
   const usedColors = new Set(result.map((t) => t.color));
 
@@ -51,6 +50,7 @@ function syncTags(tags: Tag[], segments: Segment[]): Tag[] {
         textureId: null,
         textureUrl: null,
         displacementUrl: null,
+        normalUrl: null,
       });
     }
   }
@@ -58,25 +58,101 @@ function syncTags(tags: Tag[], segments: Segment[]): Tag[] {
   return result;
 }
 
-function getInitialState() {
-  const saved = loadState();
-  const base = saved ?? {
+function getInitialStateSync() {
+  // Load structure from localStorage synchronously (no images yet)
+  try {
+    const raw = localStorage.getItem('texture-generator-state');
+    if (raw) {
+      const saved = JSON.parse(raw) as import('./types').AppState;
+      const synced = syncTags(saved.tags, saved.segments);
+      return { ...saved, tags: synced };
+    }
+  } catch (_) { /* fall through */ }
+  return {
     paths: mockPaths,
-    tags: mockTags,
+    tags: syncTags(mockTags, mockSegments),
     segments: mockSegments,
     keyframes: mockKeyframes,
   };
-  // Always sync tags with segments on load
-  return { ...base, tags: syncTags(base.tags, base.segments) };
+}
+
+/* ── Drag-resize hook ──────────────────────────────────────────────── */
+function useResize(
+  initial: number,
+  direction: 'horizontal' | 'vertical',
+  min: number,
+  max: number,
+) {
+  const [size, setSize] = useState(initial);
+  const dragging = useRef(false);
+  const startPos = useRef(0);
+  const startSize = useRef(0);
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragging.current = true;
+      startPos.current = direction === 'horizontal' ? e.clientY : e.clientX;
+      startSize.current = size;
+      document.body.style.cursor = direction === 'horizontal' ? 'row-resize' : 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [size, direction],
+  );
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return;
+      const pos = direction === 'horizontal' ? e.clientY : e.clientX;
+      const delta = pos - startPos.current;
+      setSize(Math.min(max, Math.max(min, startSize.current + delta)));
+    };
+    const onUp = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [direction, min, max]);
+
+  return { size, onMouseDown };
 }
 
 export default function App() {
-  const initial = useRef(getInitialState());
+  const initial = useRef(getInitialStateSync());
   const [tags, setTags] = useState<Tag[]>(initial.current.tags);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const rafRef = useRef<number>(0);
   const lastFrameRef = useRef<number>(0);
+  const pathViewRef = useRef<PathViewHandle>(null);
+
+  // Hydrate image data from IndexedDB after mount
+  useEffect(() => {
+    loadState().then((saved) => {
+      if (saved) {
+        setTags((prev) =>
+          prev.map((t) => {
+            const restored = saved.tags.find((s) => s.id === t.id);
+            return restored
+              ? { ...t, textureUrl: restored.textureUrl, displacementUrl: restored.displacementUrl, normalUrl: restored.normalUrl }
+              : t;
+          })
+        );
+      }
+    });
+  }, []);
+
+  /* ── Resize handles ── */
+  const topResize = useResize(Math.round(window.innerHeight * 0.55), 'horizontal', 160, window.innerHeight - 200);
+  const videoResize = useResize(280, 'vertical', 180, 600);
+  const tagResize = useResize(260, 'vertical', 180, 500);
 
   const {
     segments,
@@ -93,17 +169,16 @@ export default function App() {
     keyframes: initial.current.keyframes,
   });
 
-  // Always derive the correct tag set from raw tags + segments
-  const syncedTags = useMemo(() => syncTags(tags, segments), [tags, segments]);
+  const syncedTags = useMemo(() => {
+    return syncTags(tags, segments);
+  }, [tags, segments]);
 
-  // Keep raw state in sync so functional updaters see the full tag list
   useEffect(() => {
     if (syncedTags.length !== tags.length || !syncedTags.every((t, i) => t === tags[i])) {
       setTags(syncedTags);
     }
   }, [syncedTags, tags]);
 
-  // Auto-save on change (persist synced tags so localStorage is never missing tags)
   useEffect(() => {
     const timer = setTimeout(() => {
       saveState({ paths: mockPaths, tags: syncedTags, segments, keyframes });
@@ -111,7 +186,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [syncedTags, segments, keyframes]);
 
-  // Undo / Redo keyboard shortcuts
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -184,24 +258,29 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="top-panel">
-        <div className="left-sidebar">
+      {/* ── Top region: Video + 3D ── */}
+      <div className="top-region" style={{ height: topResize.size }}>
+        <div className="video-wrapper" style={{ width: videoResize.size }}>
           <VideoPanel currentTime={currentTime} isPlaying={isPlaying} />
-          <TagPanel tags={syncedTags} onTagsChange={setTags} />
-          <div className="sidebar-actions">
-            <button className="action-btn" onClick={handleExport}>Export</button>
-            <button className="action-btn" onClick={handleImport}>Import</button>
-          </div>
         </div>
-        <PathView
-          paths={mockPaths}
-          segments={segments}
-          keyframes={keyframes}
-          tags={syncedTags}
-          currentTime={currentTime}
-          duration={DURATION}
-        />
+        <div className="resize-handle-v" onMouseDown={videoResize.onMouseDown} />
+        <div className="viewport-wrapper">
+          <PathView
+            ref={pathViewRef}
+            paths={mockPaths}
+            segments={segments}
+            keyframes={keyframes}
+            tags={syncedTags}
+            currentTime={currentTime}
+            duration={DURATION}
+          />
+        </div>
       </div>
+
+      {/* ── Horizontal drag handle ── */}
+      <div className="resize-handle-h" onMouseDown={topResize.onMouseDown} />
+
+      {/* ── Playback controls ── */}
       <PlaybackControls
         isPlaying={isPlaying}
         currentTime={currentTime}
@@ -213,18 +292,30 @@ export default function App() {
         onUndo={undo}
         onRedo={redo}
       />
-      <Timeline
-        paths={mockPaths}
-        segments={segments}
-        tags={syncedTags}
-        keyframes={keyframes}
-        duration={DURATION}
-        currentTime={currentTime}
-        onSeek={seek}
-        onSegmentsChange={setSegments}
-        onKeyframesChange={setKeyframes}
-        onTagsChange={setTags}
-      />
+
+      {/* ── Bottom region: Tags + Timeline ── */}
+      <div className="bottom-region">
+        <div className="tag-wrapper" style={{ width: tagResize.size }}>
+          <TagPanel tags={syncedTags} onTagsChange={setTags} />
+          <div className="sidebar-actions">
+            <button className="action-btn" onClick={handleExport}>Export Project</button>
+            <button className="action-btn" onClick={handleImport}>Import Project</button>
+            <button className="action-btn action-btn-mesh" onClick={() => pathViewRef.current?.exportMesh()}>Export Mesh (.glb)</button>
+          </div>
+        </div>
+        <div className="resize-handle-v" onMouseDown={tagResize.onMouseDown} />
+        <Timeline
+          paths={mockPaths}
+          segments={segments}
+          tags={syncedTags}
+          keyframes={keyframes}
+          duration={DURATION}
+          currentTime={currentTime}
+          onSeek={seek}
+          onSegmentsChange={setSegments}
+          onKeyframesChange={setKeyframes}
+        />
+      </div>
     </div>
   );
 }

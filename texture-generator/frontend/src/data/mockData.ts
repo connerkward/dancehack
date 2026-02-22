@@ -40,10 +40,10 @@ export const mockPaths: Path[] = [
 ];
 
 export const mockTags: Tag[] = [
-  { id: 'tag-fire', label: 'Fire', color: '#ef4444', textureId: null, textureUrl: null },
-  { id: 'tag-water', label: 'Water', color: '#3b82f6', textureId: null, textureUrl: null },
-  { id: 'tag-organic', label: 'Organic', color: '#22c55e', textureId: null, textureUrl: null },
-  { id: 'tag-metallic', label: 'Metallic', color: '#a1a1aa', textureId: null, textureUrl: null },
+  { id: 'tag-fire', label: 'Fire', prompt: 'fire particle swirl', color: '#ef4444', textureId: null, textureUrl: null },
+  { id: 'tag-water', label: 'Water', prompt: 'flowing water ripple', color: '#3b82f6', textureId: null, textureUrl: null },
+  { id: 'tag-organic', label: 'Organic', prompt: 'organic vine texture', color: '#22c55e', textureId: null, textureUrl: null },
+  { id: 'tag-metallic', label: 'Metallic', prompt: 'brushed metal surface', color: '#a1a1aa', textureId: null, textureUrl: null },
 ];
 
 export const mockSegments: Segment[] = [

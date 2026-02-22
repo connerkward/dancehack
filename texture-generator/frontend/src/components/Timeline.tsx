@@ -57,122 +57,6 @@ function buildFadeMaskGradient(keyframes: Keyframe[], duration: number): string 
   return `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
-/* ─── Tag palette for auto-assigning colors to new tags ──────────── */
-const TAG_PALETTE = [
-  '#ef4444', '#3b82f6', '#22c55e', '#a1a1aa',
-  '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6',
-  '#f97316', '#6366f1',
-];
-
-/* ─── Segment edit popup ────────────────────────────────────────────── */
-
-function SegmentEditor({
-  segment,
-  tags,
-  position,
-  onSave,
-  onClose,
-}: {
-  segment: Segment;
-  tags: Tag[];
-  position: { x: number; y: number };
-  onSave: (updates: { name: string; prompt: string; tagId: string }) => void;
-  onClose: () => void;
-}) {
-  const [name, setName] = useState(segment.name ?? '');
-  const [prompt, setPrompt] = useState(segment.prompt ?? '');
-  const [tagId, setTagId] = useState(segment.tagId);
-  const [newTagLabel, setNewTagLabel] = useState('');
-  const [showNewTag, setShowNewTag] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handle = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener('mousedown', handle);
-    return () => document.removeEventListener('mousedown', handle);
-  }, [onClose]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    let finalTagId = tagId;
-    // If creating a new tag, use the label as the basis for the id
-    if (showNewTag && newTagLabel.trim()) {
-      finalTagId = `tag-${newTagLabel.trim().toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
-    }
-    onSave({ name: name.trim(), prompt: prompt.trim(), tagId: finalTagId });
-  };
-
-  const selectedTag = tags.find((t) => t.id === tagId);
-
-  return (
-    <div
-      ref={ref}
-      className="segment-editor"
-      style={{ left: position.x, top: position.y }}
-    >
-      <form onSubmit={handleSubmit}>
-        <input
-          autoFocus
-          className="segment-editor-input"
-          placeholder="Segment name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <textarea
-          className="segment-editor-textarea"
-          placeholder="Texture prompt..."
-          rows={2}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-        />
-
-        {/* Tag selector */}
-        <div className="segment-editor-tag-section">
-          <label className="segment-editor-tag-label">Tag</label>
-          {!showNewTag ? (
-            <div className="segment-editor-tag-row">
-              <select
-                className="segment-editor-select"
-                value={tagId}
-                onChange={(e) => setTagId(e.target.value)}
-              >
-                {tags.map((t) => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
-                ))}
-              </select>
-              {selectedTag && (
-                <span
-                  className="segment-editor-tag-swatch"
-                  style={{ background: selectedTag.textureUrl ? undefined : selectedTag.color, backgroundImage: selectedTag.textureUrl ? `url(${selectedTag.textureUrl})` : undefined }}
-                />
-              )}
-              <button type="button" className="segment-editor-new-tag-btn" onClick={() => setShowNewTag(true)}>+</button>
-            </div>
-          ) : (
-            <div className="segment-editor-tag-row">
-              <input
-                className="segment-editor-input"
-                placeholder="New tag name..."
-                value={newTagLabel}
-                onChange={(e) => setNewTagLabel(e.target.value)}
-                autoFocus
-              />
-              <button type="button" className="segment-editor-cancel-tag-btn" onClick={() => { setShowNewTag(false); setNewTagLabel(''); }}>x</button>
-            </div>
-          )}
-        </div>
-
-        <div className="segment-editor-actions">
-          <button type="submit" className="segment-editor-save">Save</button>
-          <button type="button" className="segment-editor-cancel" onClick={onClose}>Cancel</button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 /* ─── Main Timeline ─────────────────────────────────────────────────── */
 
 type Selection = {
@@ -192,7 +76,6 @@ export default function Timeline({
   onSeek,
   onSegmentsChange,
   onKeyframesChange,
-  onTagsChange,
 }: {
   paths: Path[];
   segments: Segment[];
@@ -203,9 +86,7 @@ export default function Timeline({
   onSeek?: (t: number) => void;
   onSegmentsChange?: (segs: Segment[]) => void;
   onKeyframesChange?: (kfs: Keyframe[]) => void;
-  onTagsChange?: (update: Tag[] | ((prev: Tag[]) => Tag[])) => void;
 }) {
-  const [editingSeg, setEditingSeg] = useState<{ seg: Segment; x: number; y: number } | null>(null);
   const [draggingKf, setDraggingKf] = useState<string | null>(null);
   const [resizing, setResizing] = useState<{ segId: string; edge: 'start' | 'end'; originX: number; originTime: number } | null>(null);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
@@ -252,27 +133,6 @@ export default function Timeline({
 
   const hasSelection = selection.segments.size > 0 || selection.keyframes.size > 0;
 
-  /* ── Ensure tags list stays in sync with segments ── */
-  const ensureTag = useCallback(
-    (tagId: string, label?: string): void => {
-      if (!onTagsChange) return;
-      onTagsChange((prev) => {
-        if (prev.some((t) => t.id === tagId)) return prev;
-        const usedColors = new Set(prev.map((t) => t.color));
-        const color = TAG_PALETTE.find((c) => !usedColors.has(c)) ?? TAG_PALETTE[prev.length % TAG_PALETTE.length];
-        return [...prev, {
-          id: tagId,
-          label: label ?? tagId,
-          color,
-          textureId: null,
-          textureUrl: null,
-          displacementUrl: null,
-        }];
-      });
-    },
-    [onTagsChange],
-  );
-
   /* ── Selection helpers ──────────────────────────── */
   const selectSegment = useCallback((segId: string, additive: boolean) => {
     setSelection((prev) => {
@@ -300,13 +160,12 @@ export default function Timeline({
   const deleteSelection = useCallback(() => {
     if (selection.segments.size > 0 && onSegmentsChange) {
       onSegmentsChange(segments.filter((s) => !selection.segments.has(s.id)));
-      if (editingSeg && selection.segments.has(editingSeg.seg.id)) setEditingSeg(null);
     }
     if (selection.keyframes.size > 0 && onKeyframesChange) {
       onKeyframesChange(keyframes.filter((k) => !selection.keyframes.has(k.id)));
     }
     setSelection(EMPTY_SELECTION);
-  }, [selection, segments, keyframes, onSegmentsChange, onKeyframesChange, editingSeg]);
+  }, [selection, segments, keyframes, onSegmentsChange, onKeyframesChange]);
 
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
@@ -397,44 +256,8 @@ export default function Timeline({
       } else {
         onSegmentsChange(segments.filter((s) => s.id !== segId));
       }
-      if (editingSeg?.seg.id === segId) setEditingSeg(null);
     },
-    [onSegmentsChange, segments, editingSeg, selection],
-  );
-
-  /* ── Segment double-click → edit name / prompt / tag ── */
-  const handleSegmentDoubleClick = useCallback(
-    (seg: Segment, e: React.MouseEvent) => {
-      e.stopPropagation();
-      const rect = (e.currentTarget as HTMLElement).closest('.timeline-panel')?.getBoundingClientRect();
-      if (!rect) return;
-      setEditingSeg({
-        seg,
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      });
-    },
-    [],
-  );
-
-  const handleSegmentSave = useCallback(
-    (updates: { name: string; prompt: string; tagId: string }) => {
-      if (!editingSeg || !onSegmentsChange) return;
-      // If this is a new tag id (from the "+" button), add it to the tags list
-      if (!tagById.has(updates.tagId)) {
-        const label = updates.name || updates.tagId.replace(/^tag-/, '').replace(/-\d+$/, '').replace(/-/g, ' ');
-        ensureTag(updates.tagId, label);
-      }
-      onSegmentsChange(
-        segments.map((s) =>
-          s.id === editingSeg.seg.id
-            ? { ...s, name: updates.name, prompt: updates.prompt, tagId: updates.tagId }
-            : s,
-        ),
-      );
-      setEditingSeg(null);
-    },
-    [editingSeg, onSegmentsChange, segments, tagById, ensureTag],
+    [onSegmentsChange, segments, selection],
   );
 
   /* ── Segment resize ─────────────────────────────── */
@@ -576,7 +399,7 @@ export default function Timeline({
           </span>
         )}
         <span className="timeline-hint">
-          Click = select | Shift+click = multi | Delete = remove | Dbl-click = add/edit
+          Click = select | Shift+click = multi | Delete = remove | Dbl-click lane = add
         </span>
       </div>
 
@@ -672,7 +495,7 @@ export default function Timeline({
                     const textureUrl = tag?.textureUrl;
                     const left = seg.start * PIXELS_PER_SECOND;
                     const width = (seg.end - seg.start) * PIXELS_PER_SECOND;
-                    const displayName = seg.name || tag?.label || seg.tagId;
+                    const displayName = tag?.label || seg.tagId;
                     const isSelected = selection.segments.has(seg.id);
                     return (
                       <div
@@ -687,10 +510,9 @@ export default function Timeline({
                           backgroundColor: textureUrl ? undefined : (tag?.color ?? DEFAULT_TAG_COLOR) + 'cc',
                           color: '#fff',
                         }}
-                        title={`${displayName}${seg.prompt ? ` — "${seg.prompt}"` : ''} (${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s)`}
+                        title={`${displayName} (${seg.start.toFixed(1)}–${seg.end.toFixed(1)}s)`}
                         onClick={(e) => handleSegmentClick(seg.id, e)}
                         onContextMenu={(e) => handleSegmentDelete(seg.id, e)}
-                        onDoubleClick={(e) => handleSegmentDoubleClick(seg, e)}
                       >
                         <div
                           className="segment-resize-handle left"
@@ -759,17 +581,6 @@ export default function Timeline({
           );
         })}
       </div>
-
-      {/* Segment editor popup */}
-      {editingSeg && (
-        <SegmentEditor
-          segment={editingSeg.seg}
-          tags={tags}
-          position={{ x: editingSeg.x, y: editingSeg.y }}
-          onSave={handleSegmentSave}
-          onClose={() => setEditingSeg(null)}
-        />
-      )}
     </div>
   );
 }

@@ -1,13 +1,13 @@
-import { useMemo, useState, useEffect } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { useMemo, useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import type { Path, Segment, Keyframe, Tag } from '../types';
 
 const DEFAULT_COLOR = new THREE.Color('#6366f1');
-const MAX_DISPLACEMENT = 0.025;
-const TUBE_SEGS = 200;
-const RAD_SEGS = 16;
+const TUBE_SEGS = 400;
+const RAD_SEGS = 64;
 
 function getSegmentAtTime(segments: Segment[], time: number): Segment | null {
   for (const seg of segments) {
@@ -35,11 +35,12 @@ function interpolateKeyframes(keyframes: Keyframe[], time: number): number {
 interface TagTextureEntry {
   map: THREE.Texture | null;
   dispMap: THREE.Texture | null;
+  normalMap: THREE.Texture | null;
 }
 
 function useTagTextures(tags: Tag[]): Map<string, TagTextureEntry> {
   const textureKey = tags
-    .map((t) => `${t.id}:${t.textureUrl ?? ''}:${t.displacementUrl ?? ''}`)
+    .map((t) => `${t.id}:${t.textureUrl ?? ''}:${t.displacementUrl ?? ''}:${t.normalUrl ?? ''}`)
     .join('|');
 
   const [textures, setTextures] = useState<Map<string, TagTextureEntry>>(
@@ -52,7 +53,7 @@ function useTagTextures(tags: Tag[]): Map<string, TagTextureEntry> {
     const newMap = new Map<string, TagTextureEntry>();
 
     for (const tag of tags) {
-      const entry: TagTextureEntry = { map: null, dispMap: null };
+      const entry: TagTextureEntry = { map: null, dispMap: null, normalMap: null };
       if (tag.textureUrl) {
         const tex = loader.load(tag.textureUrl);
         tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -66,6 +67,13 @@ function useTagTextures(tags: Tag[]): Map<string, TagTextureEntry> {
         tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
         tex.repeat.set(10, 3);
         entry.dispMap = tex;
+        loaded.push(tex);
+      }
+      if (tag.normalUrl) {
+        const tex = loader.load(tag.normalUrl);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(10, 3);
+        entry.normalMap = tex;
         loaded.push(tex);
       }
       if (entry.map || entry.dispMap) {
@@ -186,7 +194,7 @@ function PathTube({
         const b = a + RAD_SEGS + 1;
         const c = a + 1;
         const d = b + 1;
-        indices.push(a, b, c, c, b, d);
+        indices.push(a, c, b, c, d, b);
       }
     }
 
@@ -242,22 +250,29 @@ function PathTube({
       let matKey: string;
 
       if (texEntry?.map) {
-        // Textured material — displacement scale from fade at segment midpoint
+        // Textured material — displacement scale from tag + fade at segment midpoint
         const midTime = seg ? (seg.start + seg.end) / 2 : 0;
         const fadeVal = interpolateKeyframes(trackKfs, midTime);
-        matKey = `tex:${tagId}:${fadeVal.toFixed(2)}`;
+        const tagEntry = tagId ? tagById.get(tagId) : undefined;
+        const tagDispScale = tagEntry?.displacementScale ?? 0.5;
+        matKey = `tex:${tagId}:${fadeVal.toFixed(2)}:${tagDispScale.toFixed(2)}`;
 
         if (!matKeyToIndex.has(matKey)) {
           matKeyToIndex.set(matKey, mats.length);
-          mats.push(
-            new THREE.MeshStandardMaterial({
-              map: texEntry.map,
-              displacementMap: texEntry.dispMap ?? undefined,
-              displacementScale: fadeVal * MAX_DISPLACEMENT,
-              metalness: 0.35,
-              roughness: 0.45,
-            }),
-          );
+          const dispScale = fadeVal * tagDispScale * 0.04;
+          const mat = new THREE.MeshStandardMaterial({
+            map: texEntry.map,
+            displacementMap: texEntry.dispMap ?? undefined,
+            displacementScale: dispScale,
+            displacementBias: -dispScale * 0.5,
+            metalness: 0.35,
+            roughness: 0.45,
+          });
+          if (texEntry.normalMap) {
+            mat.normalMap = texEntry.normalMap;
+            mat.normalScale = new THREE.Vector2(fadeVal * tagDispScale * 3, fadeVal * tagDispScale * 3);
+          }
+          mats.push(mat);
         }
       } else {
         // Default vertex-color material
@@ -323,6 +338,58 @@ function PlayheadMarker({
   );
 }
 
+/* ─── Scene exporter helper ────────────────────────────────────────── */
+
+function SceneExporter({
+  exportFnRef,
+}: {
+  exportFnRef: React.MutableRefObject<(() => void) | null>;
+}) {
+  const { scene } = useThree();
+
+  useEffect(() => {
+    exportFnRef.current = () => {
+      // Collect only mesh objects (skip lights, helpers, playhead sphere)
+      const exportScene = new THREE.Scene();
+      scene.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (mesh.isMesh && mesh.geometry) {
+          // Skip playhead spheres (small sphere geometry)
+          const geo = mesh.geometry as THREE.SphereGeometry;
+          if (geo.type === 'SphereGeometry') return;
+          exportScene.add(mesh.clone());
+        }
+      });
+
+      const exporter = new GLTFExporter();
+      exporter.parse(
+        exportScene,
+        (result) => {
+          const blob = new Blob(
+            [result as ArrayBuffer],
+            { type: 'application/octet-stream' },
+          );
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `dancehack-mesh-${Date.now()}.glb`;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+        (error) => {
+          console.error('GLTFExporter error:', error);
+        },
+        { binary: true },
+      );
+    };
+    return () => {
+      exportFnRef.current = null;
+    };
+  }, [scene, exportFnRef]);
+
+  return null;
+}
+
 /* ─── Scene ────────────────────────────────────────────────────────── */
 
 function Scene({
@@ -332,6 +399,7 @@ function Scene({
   tags,
   currentTime,
   duration,
+  exportFnRef,
 }: {
   paths: Path[];
   segments: Segment[];
@@ -339,6 +407,7 @@ function Scene({
   tags: Tag[];
   currentTime: number;
   duration: number;
+  exportFnRef: React.MutableRefObject<(() => void) | null>;
 }) {
   const tagTextures = useTagTextures(tags);
 
@@ -365,27 +434,44 @@ function Scene({
         </group>
       ))}
       <OrbitControls makeDefault />
+      <SceneExporter exportFnRef={exportFnRef} />
     </>
   );
 }
 
 /* ─── PathView ─────────────────────────────────────────────────────── */
 
-export default function PathView({
-  paths,
-  segments = [],
-  keyframes = [],
-  tags = [],
-  currentTime = 0,
-  duration = 8,
-}: {
+export interface PathViewHandle {
+  exportMesh: () => void;
+}
+
+const PathView = forwardRef<PathViewHandle, {
   paths: Path[];
   segments?: Segment[];
   keyframes?: Keyframe[];
   tags?: Tag[];
   currentTime?: number;
   duration?: number;
-}) {
+}>(function PathView({
+  paths,
+  segments = [],
+  keyframes = [],
+  tags = [],
+  currentTime = 0,
+  duration = 8,
+}, ref) {
+  const exportFnRef = useRef<(() => void) | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    exportMesh: () => {
+      if (exportFnRef.current) {
+        exportFnRef.current();
+      } else {
+        console.warn('Scene not ready for export');
+      }
+    },
+  }));
+
   return (
     <div className="viewport">
       <Canvas camera={{ position: [3, 2, 3], fov: 50 }}>
@@ -396,8 +482,11 @@ export default function PathView({
           tags={tags}
           currentTime={currentTime}
           duration={duration}
+          exportFnRef={exportFnRef}
         />
       </Canvas>
     </div>
   );
-}
+});
+
+export default PathView;
