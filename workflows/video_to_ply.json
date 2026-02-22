@@ -1,0 +1,180 @@
+{
+  "last_node_id": 5,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadSharpModel",
+      "pos": [100, 200],
+      "size": [320, 100],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "model",
+          "type": "SHARP_MODEL",
+          "links": [3],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadSharpModel"
+      },
+      "widgets_values": ["auto", ""]
+    },
+    {
+      "id": 2,
+      "type": "LoadVideo",
+      "pos": [100, 420],
+      "size": [320, 100],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [1],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadVideo"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 3,
+      "type": "GetVideoComponents",
+      "pos": [520, 420],
+      "size": [320, 120],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [2],
+          "slot_index": 0
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GetVideoComponents"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 4,
+      "type": "SharpPredict",
+      "pos": [940, 300],
+      "size": [320, 170],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "SHARP_MODEL",
+          "link": 3
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "ply_path",
+          "type": "STRING",
+          "links": [4],
+          "slot_index": 0
+        },
+        {
+          "name": "extrinsics",
+          "type": "EXTRINSICS",
+          "links": [5],
+          "slot_index": 1
+        },
+        {
+          "name": "intrinsics",
+          "type": "INTRINSICS",
+          "links": [6],
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SharpPredict"
+      },
+      "widgets_values": [30.0, "sharp_video"]
+    },
+    {
+      "id": 5,
+      "type": "PlyPreviewPreviewGaussianEnhance",
+      "pos": [1360, 300],
+      "size": [320, 120],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "ply_path",
+          "type": "STRING",
+          "link": 4
+        },
+        {
+          "name": "extrinsics",
+          "type": "EXTRINSICS",
+          "link": 5
+        },
+        {
+          "name": "intrinsics",
+          "type": "INTRINSICS",
+          "link": 6
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PlyPreviewPreviewGaussianEnhance"
+      },
+      "widgets_values": []
+    }
+  ],
+  "links": [
+    [1, 2, 0, 3, 0, "VIDEO"],
+    [2, 3, 0, 4, 1, "IMAGE"],
+    [3, 1, 0, 4, 0, "SHARP_MODEL"],
+    [4, 4, 0, 5, 0, "STRING"],
+    [5, 4, 1, 5, 1, "EXTRINSICS"],
+    [6, 4, 2, 5, 2, "INTRINSICS"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1,
+      "offset": [0, 0]
+    }
+  },
+  "version": 0.4
+}

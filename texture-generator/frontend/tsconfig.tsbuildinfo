@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/pathview.tsx","./src/components/playbackcontrols.tsx","./src/components/tagpanel.tsx","./src/components/timeline.tsx","./src/components/videopanel.tsx","./src/data/mockdata.ts","./src/types/index.ts","./src/utils/persistence.ts"],"version":"5.9.3"}
