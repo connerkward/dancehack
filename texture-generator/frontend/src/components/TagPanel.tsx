@@ -68,6 +68,7 @@ export default function TagPanel({
   const [editIpScale, setEditIpScale] = useState(0.5);
   const [newRefImage, setNewRefImage] = useState<string | null>(null);
   const [newIpScale, setNewIpScale] = useState(0.5);
+  const [dispCompression, setDispCompression] = useState(0.5);
   const editRef = useRef<HTMLDivElement>(null);
   const newRef = useRef<HTMLDivElement>(null);
   const editFileRef = useRef<HTMLInputElement>(null);

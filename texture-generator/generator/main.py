@@ -1,14 +1,14 @@
 """
-Texture Generator Service v3.1
+Texture Generator Service v4.0
 
 High-quality tileable texture generation using SDXL Base 1.0 (~7GB).
 Seamless tiling via circular padding on all Conv2d layers (torus topology).
-MiDaS DPT_Large for high-quality displacement/depth maps.
+CHORD (Ubisoft La Forge) for PBR material estimation including height maps.
 
 Features:
 - Circular padding on both UNet + VAE for guaranteed seamless tiling
 - Material-aware prompt engineering
-- MiDaS DPT_Large neural depth estimation for displacement maps
+- CHORD neural PBR estimation for displacement/height maps
 - Normal map generation endpoint
 - IP-Adapter for reference image support
 """
@@ -32,7 +32,7 @@ from PIL import Image, ImageFilter
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Texture Generator", version="3.1.0")
+app = FastAPI(title="Texture Generator", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,8 +44,7 @@ app.add_middleware(
 pipe = None
 device = None
 gen_lock = threading.Lock()
-midas_model = None
-midas_transform = None
+chord_model = None
 
 # ── Material-aware prompt enhancement ──────────────────────────────────────
 
@@ -180,6 +179,8 @@ def load_pipeline():
     logger.info(f"Patched {unet_count} UNet + {vae_count} VAE Conv2d layers")
 
     # Load IP-Adapter for reference image support
+    # Note: enable_attention_slicing() is incompatible with IP-Adapter
+    # (overwrites IP-Adapter attention processors), so we skip it.
     logger.info("Loading IP-Adapter for SDXL...")
     pipe.load_ip_adapter(
         "h94/IP-Adapter",
@@ -189,36 +190,48 @@ def load_pipeline():
     pipe.set_ip_adapter_scale(0.0)
     logger.info("IP-Adapter loaded (default scale 0.0)")
 
-    pipe.enable_attention_slicing()
     pipe.to(device)
     logger.info("Pipeline ready (SDXL Base + circular padding + IP-Adapter)")
 
 
-def load_midas():
-    """Load MiDaS DPT_Large for high-quality depth/displacement estimation (~1.2GB)."""
-    global midas_model, midas_transform
+def load_chord():
+    """Load CHORD model for PBR material estimation (normal → height maps)."""
+    global chord_model
 
-    logger.info("Loading MiDaS DPT_Large (~1.2GB)...")
-    midas_model = torch.hub.load("intel-isl/MiDaS", "DPT_Large")
-    midas_model.eval()
-    midas_model.to(device)
+    import os
+    from omegaconf import OmegaConf
+    from huggingface_hub import hf_hub_download
+    from chord import ChordModel
+    from chord.io import load_torch_file
 
-    midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
-    midas_transform = midas_transforms.dpt_transform
-    logger.info("MiDaS DPT_Large ready")
+    logger.info("Loading CHORD model for PBR estimation...")
+    config_path = os.path.join(os.path.dirname(__file__), "config", "chord.yaml")
+    config = OmegaConf.load(config_path)
+    chord_model = ChordModel(config)
+
+    ckpt_path = hf_hub_download(
+        repo_id="Ubisoft/ubisoft-laforge-chord",
+        filename="chord_v1.safetensors",
+    )
+    logger.info(f"Loading CHORD weights from: {ckpt_path}")
+    state_dict = load_torch_file(ckpt_path)
+    chord_model.load_state_dict(state_dict)
+    chord_model.eval()
+    chord_model.to(device)
+    logger.info("CHORD model ready")
 
 
 @app.on_event("startup")
 async def startup():
     load_pipeline()
-    load_midas()
+    load_chord()
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "version": "3.1.0",
+        "version": "4.0.0",
         "backend": "sdxl-base-1.0",
         "device": str(device) if device else "not loaded",
     }
@@ -256,6 +269,7 @@ async def generate(
         f"Generating: '{prompt}' at {width}x{height}, steps={steps}, cfg={guidance}"
     )
 
+    pipe.set_ip_adapter_scale(0.0)
     result = pipe(
         prompt=enhanced_prompt,
         negative_prompt=negative_prompt,
@@ -264,6 +278,7 @@ async def generate(
         num_inference_steps=steps,
         guidance_scale=guidance,
         generator=generator,
+        ip_adapter_image=Image.new("RGB", (224, 224), (0, 0, 0)),
     )
 
     image = result.images[0]
@@ -339,6 +354,10 @@ async def generate_stream(
                 scale = ip_adapter_scale if ref_pil is not None else 0.0
                 pipe.set_ip_adapter_scale(scale)
 
+                # IP-Adapter requires ip_adapter_image always once loaded;
+                # use a blank image when no reference is provided
+                ip_image = ref_pil if ref_pil is not None else Image.new("RGB", (224, 224), (0, 0, 0))
+
                 kwargs = dict(
                     prompt=enhanced_prompt,
                     negative_prompt=negative_prompt,
@@ -348,10 +367,8 @@ async def generate_stream(
                     guidance_scale=guidance,
                     generator=generator,
                     callback_on_step_end=on_step,
+                    ip_adapter_image=ip_image,
                 )
-
-                if ref_pil is not None and scale > 0:
-                    kwargs["ip_adapter_image"] = ref_pil
 
                 result = pipe(**kwargs)
 
@@ -433,75 +450,70 @@ def _luminance(rgb: np.ndarray) -> np.ndarray:
 
 
 @app.post("/displacement")
-async def displacement(image: UploadFile = File(...)):
+async def displacement(
+    image: UploadFile = File(...),
+    compression: float = Form(0.5),
+):
     """
-    Generate a height/displacement map from a color texture using MiDaS DPT_Large.
+    Generate a height/displacement map from a color texture using CHORD.
 
-    Uses neural monocular depth estimation for realistic surface height inference,
-    with seamless tiling post-processing via circular boundary blending.
+    Uses Ubisoft's CHORD model to predict a normal map from the texture,
+    then integrates the normal into a height field via FFT Poisson solving
+    with circular extension for seamless tiling.
+
+    - **compression**: Gamma curve for dynamic range compression (default 0.5).
+      Values < 1 compress peaks and lift subtle detail.
+      0.3 = heavy compression, 0.5 = moderate, 1.0 = linear (no compression).
     """
+    from torchvision.transforms import v2
+    from normal_to_height import normal_to_height
+
+    compression = max(0.1, min(2.0, compression))
+
     img = Image.open(io.BytesIO(await image.read())).convert("RGB")
     orig_w, orig_h = img.size
 
-    # MiDaS transform expects numpy HWC uint8
-    img_np = np.array(img)
+    # Convert to tensor [C, H, W] normalized to [0, 1]
+    img_np = np.array(img, dtype=np.float32) / 255.0
+    img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)  # HWC -> CHW
 
-    # Apply MiDaS transform and run inference
-    input_batch = midas_transform(img_np).to(device)
+    # Resize to 1024x1024 (CHORD's native resolution)
+    x = v2.Resize(size=(1024, 1024), antialias=True)(img_tensor).unsqueeze(0)
+    x = x.to(device)
 
+    logger.info("Running CHORD material estimation...")
     with torch.no_grad():
-        prediction = midas_model(input_batch)
+        output = chord_model(x)
 
-        # Resize to original image dimensions
-        prediction = torch.nn.functional.interpolate(
-            prediction.unsqueeze(1),
-            size=(orig_h, orig_w),
-            mode="bicubic",
-            align_corners=False,
-        ).squeeze()
+    # Extract normal map and convert to height
+    normal_map = output["normal"]  # [1, 3, 1024, 1024]
+    logger.info("Converting normal map to height via FFT Poisson integration...")
+    height = normal_to_height(normal_map.cpu().float(), subdivisions=8)
 
-    depth = prediction.cpu().numpy()
+    # Resize back to original dimensions
+    height_2d = height.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+    height_resized = torch.nn.functional.interpolate(
+        height_2d,
+        size=(orig_h, orig_w),
+        mode="bicubic",
+        align_corners=False,
+    ).squeeze()
 
-    # Normalize to 0-255 range
-    depth_min = depth.min()
-    depth_max = depth.max()
-    depth = (depth - depth_min) / (depth_max - depth_min + 1e-9)
+    # Normalize to 0-1
+    h_np = height_resized.numpy()
+    h_np = (h_np - h_np.min()) / (h_np.max() - h_np.min() + 1e-9)
 
-    # Invert: MiDaS outputs inverse depth (closer = higher values),
-    # but for displacement we want raised surfaces = higher values
-    depth = 1.0 - depth
+    # Apply gamma compression: reduces peaks, lifts subtle detail
+    h_np = np.power(h_np, compression)
 
-    # Seamless tiling fix: blend edges with circular wrap
-    # Use a feathered border to smooth any seam discontinuities
-    border = max(8, min(orig_w, orig_h) // 32)
-    depth_tiled = depth.copy()
+    h_uint8 = (h_np * 255).clip(0, 255).astype(np.uint8)
 
-    # Horizontal seam blending
-    for i in range(border):
-        alpha = i / border
-        left_col = depth[:, i]
-        right_col = depth[:, -(i + 1)]
-        blended = left_col * (1 - alpha) + right_col * alpha
-        depth_tiled[:, i] = depth[:, i] * alpha + blended * (1 - alpha)
-        depth_tiled[:, -(i + 1)] = depth[:, -(i + 1)] * alpha + blended * (1 - alpha)
-
-    # Vertical seam blending
-    for i in range(border):
-        alpha = i / border
-        top_row = depth_tiled[i, :]
-        bot_row = depth_tiled[-(i + 1), :]
-        blended = top_row * (1 - alpha) + bot_row * alpha
-        depth_tiled[i, :] = depth_tiled[i, :] * alpha + blended * (1 - alpha)
-        depth_tiled[-(i + 1), :] = depth_tiled[-(i + 1), :] * alpha + blended * (1 - alpha)
-
-    # Light Gaussian smooth to reduce any remaining micro-artifacts
-    depth_uint8 = (depth_tiled * 255).clip(0, 255).astype(np.uint8)
-    result = Image.fromarray(depth_uint8, mode="L")
-    result = result.filter(ImageFilter.GaussianBlur(radius=0.8))
+    result = Image.fromarray(h_uint8, mode="L")
 
     buf = io.BytesIO()
     result.save(buf, format="PNG")
     buf.seek(0)
+    logger.info(f"Displacement map generated via CHORD (compression={compression})")
     return StreamingResponse(buf, media_type="image/png")
 
 
