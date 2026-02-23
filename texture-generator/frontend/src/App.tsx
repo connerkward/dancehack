@@ -138,6 +138,7 @@ export default function App() {
   const [maxDisplacement, setMaxDisplacement] = useState(1.0);
   const [showTextures, setShowTextures] = useState(true);
   const [textureDensity, setTextureDensity] = useState(1.0);
+  const [dispCompression, setDispCompression] = useState(1.0);
 
   // Hydrate image data from IndexedDB after mount
   useEffect(() => {
@@ -291,6 +292,7 @@ export default function App() {
             maxDisplacement={maxDisplacement}
             showTextures={showTextures}
             textureDensity={textureDensity}
+            dispCompression={dispCompression}
           />
         </div>
       </div>
@@ -345,6 +347,17 @@ export default function App() {
               onChange={(e) => setTextureDensity(parseFloat(e.target.value))}
             />
             <span className="displacement-slider-value">{textureDensity.toFixed(2)}</span>
+            <label className="displacement-slider-label">Compress</label>
+            <input
+              type="range"
+              className="displacement-slider"
+              min={0.1}
+              max={2}
+              step={0.05}
+              value={dispCompression}
+              onChange={(e) => setDispCompression(parseFloat(e.target.value))}
+            />
+            <span className="displacement-slider-value">{dispCompression.toFixed(2)}</span>
           </div>
         </div>
         <div className="resize-handle-v" onMouseDown={tagResize.onMouseDown} />

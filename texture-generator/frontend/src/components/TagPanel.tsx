@@ -68,11 +68,11 @@ export default function TagPanel({
   const [editIpScale, setEditIpScale] = useState(0.5);
   const [newRefImage, setNewRefImage] = useState<string | null>(null);
   const [newIpScale, setNewIpScale] = useState(0.5);
-  const [dispCompression, setDispCompression] = useState(0.5);
   const editRef = useRef<HTMLDivElement>(null);
   const newRef = useRef<HTMLDivElement>(null);
   const editFileRef = useRef<HTMLInputElement>(null);
   const newFileRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Close preview on Escape
   useEffect(() => {
@@ -181,8 +181,17 @@ export default function TagPanel({
     []
   );
 
+  const cancelGeneration = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+  }, []);
+
   const generateTexture = useCallback(
     async (tag: Tag) => {
+      const abort = new AbortController();
+      abortRef.current = abort;
       setGenerating(tag.id);
       setProgress((prev) => ({ ...prev, [tag.id]: 0 }));
       setTagStatus(tag.id, { phase: 'texture', message: 'Generating texture...' });
@@ -207,6 +216,7 @@ export default function TagPanel({
         const res = await fetch(`${GENERATOR_URL}/generate-stream`, {
           method: 'POST',
           body: form,
+          signal: abort.signal,
         });
 
         if (!res.ok) throw new Error(`Generator ${res.status}`);
@@ -217,6 +227,7 @@ export default function TagPanel({
         let b64Image: string | null = null;
 
         while (true) {
+          if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
           const { done, value } = await reader.read();
           if (done) break;
 
@@ -269,12 +280,14 @@ export default function TagPanel({
           const dispRes = await fetch(`${GENERATOR_URL}/displacement`, {
             method: 'POST',
             body: dispForm,
+            signal: abort.signal,
           });
           if (dispRes.ok) {
             const dispBlob = await dispRes.blob();
             displacementUrl = await blobToDataUrl(dispBlob);
           }
         } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') throw err;
           console.warn('Displacement generation failed:', err);
         }
 
@@ -285,12 +298,14 @@ export default function TagPanel({
           const normRes = await fetch(`${GENERATOR_URL}/normal`, {
             method: 'POST',
             body: normForm,
+            signal: abort.signal,
           });
           if (normRes.ok) {
             const normBlob = await normRes.blob();
             normalUrl = await blobToDataUrl(normBlob);
           }
         } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') throw err;
           console.warn('Normal map generation failed:', err);
         }
 
@@ -302,10 +317,17 @@ export default function TagPanel({
         setTagStatus(tag.id, { phase: 'done', message: 'Done' });
         setTimeout(() => setTagStatus(tag.id, null), 2000);
       } catch (err) {
-        console.error('Texture generation failed:', err);
-        setTagStatus(tag.id, { phase: 'error', message: 'Failed' });
-        setTimeout(() => setTagStatus(tag.id, null), 3000);
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          console.log('Generation cancelled');
+          setTagStatus(tag.id, { phase: 'error', message: 'Cancelled' });
+          setTimeout(() => setTagStatus(tag.id, null), 2000);
+        } else {
+          console.error('Texture generation failed:', err);
+          setTagStatus(tag.id, { phase: 'error', message: 'Failed' });
+          setTimeout(() => setTagStatus(tag.id, null), 3000);
+        }
       } finally {
+        abortRef.current = null;
         setGenerating(null);
         setProgress((prev) => {
           const next = { ...prev };
@@ -482,13 +504,22 @@ export default function TagPanel({
             )}
 
             {!isEditing && (
-              <button
-                className="tag-generate-btn"
-                disabled={isActive}
-                onClick={() => generateTexture(tag)}
-              >
-                {isActive ? '...' : 'Gen'}
-              </button>
+              isActive ? (
+                <button
+                  className="tag-generate-btn cancel"
+                  onClick={cancelGeneration}
+                >
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  className="tag-generate-btn"
+                  disabled={generating !== null}
+                  onClick={() => generateTexture(tag)}
+                >
+                  Gen
+                </button>
+              )
             )}
           </div>
         );

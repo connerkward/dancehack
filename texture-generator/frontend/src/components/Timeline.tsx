@@ -245,12 +245,10 @@ export default function Timeline({
   const handleSegmentDoubleClick = useCallback(
     (segId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      const rect = panelRef.current?.getBoundingClientRect();
-      if (!rect) return;
       setRetagging({
         segId,
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
+        x: e.clientX,
+        y: e.clientY,
       });
     },
     [],
@@ -677,11 +675,19 @@ export default function Timeline({
       </div>
 
       {/* ── Retag popup ── */}
-      {retagging && (
+      {retagging && (() => {
+        const margin = 8;
+        const maxH = window.innerHeight - margin * 2;
+        const top = Math.min(retagging.y, window.innerHeight - margin);
+        const availBelow = window.innerHeight - top - margin;
+        const popupMaxH = Math.max(120, availBelow);
+        const finalTop = popupMaxH < 160 ? Math.max(margin, retagging.y - 200) : top;
+        const finalMaxH = popupMaxH < 160 ? Math.min(maxH, window.innerHeight - finalTop - margin) : popupMaxH;
+        return (
         <div
           ref={retagRef}
           className="retag-popup"
-          style={{ left: retagging.x, top: retagging.y }}
+          style={{ left: retagging.x, top: finalTop, maxHeight: finalMaxH }}
         >
           {tags.map((tag) => (
             <button
@@ -700,7 +706,8 @@ export default function Timeline({
             </button>
           ))}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

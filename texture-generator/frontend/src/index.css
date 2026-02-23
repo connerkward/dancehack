@@ -565,15 +565,15 @@ html, body, #root {
 
 /* Retag popup */
 .retag-popup {
-  position: absolute;
+  position: fixed;
   background: #2d2d35;
   border: 1px solid #555;
   border-radius: 4px;
   padding: 4px 0;
   min-width: 140px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-  z-index: 100;
-  max-height: 200px;
+  z-index: 1000;
+  max-height: 50vh;
   overflow-y: auto;
 }
 
@@ -748,6 +748,8 @@ html, body, #root {
   padding: 8px;
   border-top: 1px solid #3a3a42;
   background: #25252c;
+  overflow-x: auto;
+  flex-shrink: 0;
 }
 
 .displacement-slider-label {
@@ -757,11 +759,11 @@ html, body, #root {
 }
 
 .displacement-slider {
-  flex: 1;
+  width: 60px;
+  flex-shrink: 0;
   height: 4px;
   accent-color: #f59e0b;
   cursor: pointer;
-  min-width: 60px;
 }
 
 .displacement-slider-value {
@@ -769,6 +771,7 @@ html, body, #root {
   color: #f59e0b;
   font-variant-numeric: tabular-nums;
   min-width: 28px;
+  flex-shrink: 0;
   text-align: right;
 }
 
@@ -1018,6 +1021,16 @@ html, body, #root {
 .tag-generate-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.tag-generate-btn.cancel {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+.tag-generate-btn.cancel:hover {
+  background: #ef4444;
+  color: #fff;
 }
 
 .tag-color-swatch.clickable {

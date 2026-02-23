@@ -149,6 +149,7 @@ function PathTube({
   maxDisplacement = 1,
   showTextures = true,
   textureDensity = 1,
+  dispCompression = 1,
 }: {
   path: Path;
   segments: Segment[];
@@ -159,6 +160,7 @@ function PathTube({
   maxDisplacement?: number;
   showTextures?: boolean;
   textureDensity?: number;
+  dispCompression?: number;
 }) {
   const { curve, radiusAt } = useMemo(() => {
     const points = path.points.map((p) => new THREE.Vector3(p.x, p.y, p.z));
@@ -266,7 +268,9 @@ function PathTube({
         // Displace vertex along radial normal based on texture
         if (dispPixels && dispScale > 0) {
           const v = j / RAD_SEGS;
-          const d = sampleDisp(dispPixels, u, v);
+          const dRaw = sampleDisp(dispPixels, u, v);
+          // Gamma compression: <1 compresses peaks, lifts subtle detail
+          const d = dispCompression !== 1 ? Math.pow(dRaw, dispCompression) : dRaw;
           const offset = (d - 0.5) * dispScale;
           px += nx * offset;
           py += ny * offset;
@@ -533,6 +537,7 @@ function Scene({
   maxDisplacement,
   showTextures,
   textureDensity,
+  dispCompression,
   exportFnRef,
 }: {
   paths: Path[];
@@ -544,6 +549,7 @@ function Scene({
   maxDisplacement: number;
   showTextures: boolean;
   textureDensity: number;
+  dispCompression: number;
   exportFnRef: React.MutableRefObject<ExportFns>;
 }) {
   const tagTextures = useTagTextures(tags);
@@ -565,6 +571,7 @@ function Scene({
             maxDisplacement={maxDisplacement}
             showTextures={showTextures}
             textureDensity={textureDensity}
+            dispCompression={dispCompression}
           />
           <PlayheadMarker
             path={path}
@@ -597,6 +604,7 @@ const PathView = forwardRef<PathViewHandle, {
   maxDisplacement?: number;
   showTextures?: boolean;
   textureDensity?: number;
+  dispCompression?: number;
 }>(function PathView({
   paths,
   segments = [],
@@ -607,6 +615,7 @@ const PathView = forwardRef<PathViewHandle, {
   maxDisplacement = 1,
   showTextures = true,
   textureDensity = 1,
+  dispCompression = 1,
 }, ref) {
   const exportFnRef = useRef<ExportFns>({ glb: null, usdz: null, obj: null });
 
@@ -647,6 +656,7 @@ const PathView = forwardRef<PathViewHandle, {
           maxDisplacement={maxDisplacement}
           showTextures={showTextures}
           textureDensity={textureDensity}
+          dispCompression={dispCompression}
           exportFnRef={exportFnRef}
         />
       </Canvas>

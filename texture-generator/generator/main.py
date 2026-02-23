@@ -450,25 +450,16 @@ def _luminance(rgb: np.ndarray) -> np.ndarray:
 
 
 @app.post("/displacement")
-async def displacement(
-    image: UploadFile = File(...),
-    compression: float = Form(0.5),
-):
+async def displacement(image: UploadFile = File(...)):
     """
     Generate a height/displacement map from a color texture using CHORD.
 
     Uses Ubisoft's CHORD model to predict a normal map from the texture,
     then integrates the normal into a height field via FFT Poisson solving
     with circular extension for seamless tiling.
-
-    - **compression**: Gamma curve for dynamic range compression (default 0.5).
-      Values < 1 compress peaks and lift subtle detail.
-      0.3 = heavy compression, 0.5 = moderate, 1.0 = linear (no compression).
     """
     from torchvision.transforms import v2
     from normal_to_height import normal_to_height
-
-    compression = max(0.1, min(2.0, compression))
 
     img = Image.open(io.BytesIO(await image.read())).convert("RGB")
     orig_w, orig_h = img.size
@@ -503,9 +494,6 @@ async def displacement(
     h_np = height_resized.numpy()
     h_np = (h_np - h_np.min()) / (h_np.max() - h_np.min() + 1e-9)
 
-    # Apply gamma compression: reduces peaks, lifts subtle detail
-    h_np = np.power(h_np, compression)
-
     h_uint8 = (h_np * 255).clip(0, 255).astype(np.uint8)
 
     result = Image.fromarray(h_uint8, mode="L")
@@ -513,7 +501,7 @@ async def displacement(
     buf = io.BytesIO()
     result.save(buf, format="PNG")
     buf.seek(0)
-    logger.info(f"Displacement map generated via CHORD (compression={compression})")
+    logger.info("Displacement map generated via CHORD")
     return StreamingResponse(buf, media_type="image/png")
 
 
