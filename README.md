@@ -12,8 +12,6 @@ Built under interdisciplinary artist **[Merli Guerra](https://www.instagram.com/
 |---|---|
 | ![Merli Guerra studio 1](docs/media/merli-1.jpg) | ![Merli Guerra studio 2](docs/media/merli-2.jpg) |
 
-Motion reference (clip): [`docs/media/merli-performance.mp4`](docs/media/merli-performance.mp4) — the kind of movement whose captured path becomes the input to this tool.
-
 ## Pipeline
 
 ![dancehack pipeline](docs/pipeline.png)
