@@ -4,6 +4,16 @@ Texture-painting timeline for dancer motion. Take 3D paths captured from a dance
 
 ![dancehack UI](docs/screenshot.png)
 
+## Context
+
+Built under interdisciplinary artist **[Merli Guerra](https://www.instagram.com/merliguerra/)**, whose practice spans choreography, video, and visual installation. dancehack is a custom tool for translating recorded dancer movement into texturable 3D geometry that can be re-animated and re-skinned for video work and installations — the dancer's path becomes a brushstroke; the timeline picks what it's painted with.
+
+| Studio / performance reference |   |
+|---|---|
+| ![Merli Guerra studio 1](docs/media/merli-1.jpg) | ![Merli Guerra studio 2](docs/media/merli-2.jpg) |
+
+Motion reference (clip): [`docs/media/merli-performance.mp4`](docs/media/merli-performance.mp4) — the kind of movement whose captured path becomes the input to this tool.
+
 ## What it does
 
 - **3D viewport** — Each input path becomes a tube in 3D. Tube radius is driven by per-point velocity, so faster motion = thicker tube. Orbit/pan to inspect.
