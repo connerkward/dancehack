@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 460" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa5b1"/>
+    </marker>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f1419"/>
+      <stop offset="1" stop-color="#1a1f29"/>
+    </linearGradient>
+    <linearGradient id="capGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff7a59"/>
+      <stop offset="1" stop-color="#b8421f"/>
+    </linearGradient>
+    <linearGradient id="shapeGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4caf50"/>
+      <stop offset="1" stop-color="#1f6d2c"/>
+    </linearGradient>
+    <linearGradient id="authGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5b041"/>
+      <stop offset="1" stop-color="#a06a0a"/>
+    </linearGradient>
+    <linearGradient id="genGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9b59b6"/>
+      <stop offset="1" stop-color="#5b2c75"/>
+    </linearGradient>
+    <linearGradient id="outGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3498db"/>
+      <stop offset="1" stop-color="#1a5a8a"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="460" fill="url(#bgGrad)"/>
+
+  <text x="640" y="40" text-anchor="middle" font-size="22" font-weight="600" fill="#e6e8eb">dancehack pipeline</text>
+  <text x="640" y="62" text-anchor="middle" font-size="13" fill="#9aa5b1">dancer motion → tubes → keyframed texture authoring → SDXL + CHORD PBR</text>
+
+  <!-- Stage 1: Capture -->
+  <g transform="translate(40,110)">
+    <rect width="200" height="200" rx="14" fill="url(#capGrad)" opacity="0.92"/>
+    <text x="100" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#1a0a02" letter-spacing="1">1 · CAPTURE</text>
+    <text x="100" y="70" text-anchor="middle" font-size="16" font-weight="600" fill="#fff">Dancer</text>
+    <text x="100" y="92" text-anchor="middle" font-size="11" fill="#fbe5d6">wrist / body sensors,</text>
+    <text x="100" y="108" text-anchor="middle" font-size="11" fill="#fbe5d6">video tracking</text>
+    <g transform="translate(70,130)" stroke="#fff" stroke-width="2" fill="none" opacity="0.85">
+      <circle cx="30" cy="10" r="6" fill="#fff"/>
+      <path d="M30,16 L30,40 M30,28 L14,22 M30,28 L46,22 M30,40 L20,58 M30,40 L40,58" stroke-linecap="round"/>
+    </g>
+    <text x="100" y="180" text-anchor="middle" font-size="11" fill="#fff">→ 3D paths (t, x, y, z, velocity)</text>
+  </g>
+
+  <!-- Stage 2: Shape -->
+  <g transform="translate(280,110)">
+    <rect width="200" height="200" rx="14" fill="url(#shapeGrad)" opacity="0.92"/>
+    <text x="100" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#0a1a0c" letter-spacing="1">2 · SHAPE</text>
+    <text x="100" y="70" text-anchor="middle" font-size="16" font-weight="600" fill="#fff">Velocity tubes</text>
+    <text x="100" y="92" text-anchor="middle" font-size="11" fill="#dff0d8">CatmullRom curve;</text>
+    <text x="100" y="108" text-anchor="middle" font-size="11" fill="#dff0d8">radius ∝ velocity</text>
+    <path d="M20,160 Q60,120 100,150 T180,160" stroke="#fff" stroke-width="14" stroke-linecap="round" fill="none" opacity="0.55"/>
+    <path d="M20,160 Q60,120 100,150 T180,160" stroke="#fff" stroke-width="3" fill="none"/>
+  </g>
+
+  <!-- Stage 3: Author -->
+  <g transform="translate(520,110)">
+    <rect width="220" height="200" rx="14" fill="url(#authGrad)" opacity="0.92"/>
+    <text x="110" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1102" letter-spacing="1">3 · AUTHOR</text>
+    <text x="110" y="70" text-anchor="middle" font-size="16" font-weight="600" fill="#fff">NLE timeline</text>
+    <text x="110" y="92" text-anchor="middle" font-size="11" fill="#fdebd0">tagged segments +</text>
+    <text x="110" y="108" text-anchor="middle" font-size="11" fill="#fdebd0">fade keyframes (0–1)</text>
+    <!-- mini timeline -->
+    <g transform="translate(20,130)">
+      <rect x="0"  y="0"  width="60" height="22" rx="3" fill="#c0392b"/>
+      <rect x="62" y="0"  width="50" height="22" rx="3" fill="#2980b9"/>
+      <rect x="114" y="0" width="66" height="22" rx="3" fill="#27ae60"/>
+      <text x="30"  y="15" text-anchor="middle" font-size="9" fill="#fff">Fire</text>
+      <text x="87"  y="15" text-anchor="middle" font-size="9" fill="#fff">Water</text>
+      <text x="147" y="15" text-anchor="middle" font-size="9" fill="#fff">Leaf</text>
+      <!-- keyframe curve -->
+      <polyline points="0,55 30,45 60,50 90,38 120,42 150,55 180,52" stroke="#fff" stroke-width="1.5" fill="none"/>
+      <g fill="#fff">
+        <circle cx="0"   cy="55" r="3"/><circle cx="30"  cy="45" r="3"/>
+        <circle cx="60"  cy="50" r="3"/><circle cx="90"  cy="38" r="3"/>
+        <circle cx="120" cy="42" r="3"/><circle cx="150" cy="55" r="3"/>
+        <circle cx="180" cy="52" r="3"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- Stage 4: Generate -->
+  <g transform="translate(780,110)">
+    <rect width="260" height="200" rx="14" fill="url(#genGrad)" opacity="0.92"/>
+    <text x="130" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#1a0a1f" letter-spacing="1">4 · GENERATE</text>
+    <text x="130" y="62" text-anchor="middle" font-size="14" font-weight="600" fill="#fff">SDXL Base 1.0 + IP-Adapter</text>
+    <text x="130" y="80" text-anchor="middle" font-size="10" fill="#e8d5f0">circular-padded UNet/VAE → tileable albedo</text>
+    <line x1="20" y1="100" x2="240" y2="100" stroke="#fff" stroke-opacity="0.3"/>
+    <text x="130" y="125" text-anchor="middle" font-size="14" font-weight="600" fill="#fff">CHORD (Ubisoft La Forge)</text>
+    <text x="130" y="143" text-anchor="middle" font-size="10" fill="#e8d5f0">neural PBR: normal · height · roughness</text>
+    <!-- tiny texture swatches -->
+    <g transform="translate(50,158)">
+      <rect x="0"  y="0" width="30" height="30" rx="3" fill="#8b5a2b"/>
+      <rect x="36" y="0" width="30" height="30" rx="3" fill="#6b8e23"/>
+      <rect x="72" y="0" width="30" height="30" rx="3" fill="#4a708b"/>
+      <rect x="108" y="0" width="30" height="30" rx="3" fill="#888"/>
+      <text x="15"  y="44" text-anchor="middle" font-size="8" fill="#fff">albedo</text>
+      <text x="51"  y="44" text-anchor="middle" font-size="8" fill="#fff">normal</text>
+      <text x="87"  y="44" text-anchor="middle" font-size="8" fill="#fff">height</text>
+      <text x="123" y="44" text-anchor="middle" font-size="8" fill="#fff">rough</text>
+    </g>
+  </g>
+
+  <!-- Stage 5: Output -->
+  <g transform="translate(1080,110)">
+    <rect width="160" height="200" rx="14" fill="url(#outGrad)" opacity="0.92"/>
+    <text x="80" y="34" text-anchor="middle" font-size="13" font-weight="700" fill="#02101a" letter-spacing="1">5 · OUTPUT</text>
+    <text x="80" y="70" text-anchor="middle" font-size="16" font-weight="600" fill="#fff">Textured 3D</text>
+    <text x="80" y="92" text-anchor="middle" font-size="11" fill="#d6eaf8">video render,</text>
+    <text x="80" y="108" text-anchor="middle" font-size="11" fill="#d6eaf8">installation,</text>
+    <text x="80" y="124" text-anchor="middle" font-size="11" fill="#d6eaf8">stage projection</text>
+    <g transform="translate(20,148)">
+      <path d="M10,30 Q40,10 70,28 T130,32" stroke="#fff" stroke-width="9" fill="none" stroke-linecap="round" opacity="0.4"/>
+      <path d="M10,30 Q40,10 70,28 T130,32" stroke="#fff" stroke-width="3" fill="none"/>
+    </g>
+  </g>
+
+  <!-- Arrows between stages -->
+  <g stroke="#9aa5b1" stroke-width="2" fill="none">
+    <line x1="244" y1="210" x2="276" y2="210" marker-end="url(#arrow)"/>
+    <line x1="484" y1="210" x2="516" y2="210" marker-end="url(#arrow)"/>
+    <line x1="744" y1="210" x2="776" y2="210" marker-end="url(#arrow)"/>
+    <line x1="1044" y1="210" x2="1076" y2="210" marker-end="url(#arrow)"/>
+  </g>
+
+  <!-- Loop-back arrow: keyframe edits re-trigger render -->
+  <g stroke="#5d6d7e" stroke-width="1.5" fill="none" stroke-dasharray="4 4">
+    <path d="M1160,310 Q1160,370 940,370 Q620,370 620,330" marker-end="url(#arrow)"/>
+  </g>
+  <text x="900" y="395" text-anchor="middle" font-size="11" fill="#7f8c8d" font-style="italic">edit timeline → re-render (fast cycle)</text>
+
+  <text x="40"   y="440" font-size="11" fill="#5d6d7e">SDXL Base 1.0 · IP-Adapter (ip-adapter_sdxl)</text>
+  <text x="1240" y="440" text-anchor="end" font-size="11" fill="#5d6d7e">CHORD v1 (Ubisoft/ubisoft-laforge-chord)</text>
+</svg>
